@@ -1,4 +1,4 @@
-from models import AdminUser, AverageValueModel, MLTask, RequestHistory, User
+from .models import AdminUser, AverageValueModel, MLTask, RequestHistory, User
 
 
 def main() -> None:
@@ -27,4 +27,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

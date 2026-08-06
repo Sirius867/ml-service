@@ -1,0 +1,45 @@
+services:
+  app:
+    build: ./app
+    env_file:
+      - ./app/.env
+    volumes:
+      - ./app/src:/app/src
+    depends_on:
+      - rabbitmq
+      - database
+    expose:
+      - "8080"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  web-proxy:
+    build: ./web-proxy
+    depends_on:
+      app:
+        condition: service_healthy
+    ports:
+      - "80:80"
+      - "443:443"
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    restart: on-failure
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - ./data/rabbitmq:/var/lib/rabbitmq
+
+  database:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ml_service
+      POSTGRES_USER: ml_user
+      POSTGRES_PASSWORD: ml_password
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
