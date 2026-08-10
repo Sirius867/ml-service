@@ -6,8 +6,10 @@ services:
     volumes:
       - ./app/src:/app/src
     depends_on:
-      - rabbitmq
-      - database
+      rabbitmq:
+        condition: service_started
+      database:
+        condition: service_healthy
     expose:
       - "8080"
     healthcheck:
@@ -43,3 +45,8 @@ services:
       POSTGRES_PASSWORD: ml_password
     volumes:
       - ./data/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ml_user -d ml_service"]
+      interval: 5s
+      timeout: 5s
+      retries: 5

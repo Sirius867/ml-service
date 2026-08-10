@@ -1,7 +1,17 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 
+from .init_db import initialize_database
 
-app = FastAPI(title="ML Service", version="0.1.0")
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    initialize_database()
+    yield
+
+
+app = FastAPI(title="ML Service", version="0.1.0", lifespan=lifespan)
 
 
 @app.get("/")
