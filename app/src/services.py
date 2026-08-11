@@ -5,7 +5,15 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker, selectinload
 
+from .exceptions import (
+    AuthenticationError,
+    ConflictError,
+    InsufficientBalanceError,
+    InvalidDataError,
+    NotFoundError,
+)
 from .orm_models import MLModelRecord, MLRequestRecord, TransactionRecord, UserRecord
+from .security import hash_password, verify_password
 
 
 def as_credits(value: Decimal | float | int | str) -> Decimal:
@@ -20,18 +28,28 @@ class MLService:
         self, email: str, password_hash: str, role: str = "user"
     ) -> UserRecord:
         if not email.strip() or not password_hash:
-            raise ValueError("Email и хеш пароля обязательны")
+            raise InvalidDataError("Email и хеш пароля обязательны")
         if role not in {"user", "admin"}:
-            raise ValueError("Неизвестная роль пользователя")
+            raise InvalidDataError("Неизвестная роль пользователя")
 
         with self._session_factory.begin() as session:
             existing = session.scalar(select(UserRecord).where(UserRecord.email == email))
             if existing:
-                raise ValueError("Пользователь с таким email уже существует")
+                raise ConflictError("Пользователь с таким email уже существует")
 
             user = UserRecord(email=email, password_hash=password_hash, role=role)
             session.add(user)
             session.flush()
+            return user
+
+    def register_user(self, email: str, password: str) -> UserRecord:
+        return self.create_user(email, hash_password(password))
+
+    def authenticate(self, email: str, password: str) -> UserRecord:
+        with self._session_factory() as session:
+            user = session.scalar(select(UserRecord).where(UserRecord.email == email))
+            if user is None or not verify_password(password, user.password_hash):
+                raise AuthenticationError("Неверный email или пароль")
             return user
 
     def get_user(self, user_id: UUID) -> UserRecord | None:
@@ -43,7 +61,7 @@ class MLService:
     ) -> TransactionRecord:
         credits = as_credits(amount)
         if credits <= 0:
-            raise ValueError("Сумма пополнения должна быть положительной")
+            raise InvalidDataError("Сумма пополнения должна быть положительной")
 
         with self._session_factory.begin() as session:
             user = self._get_user_for_update(session, user_id)
@@ -60,12 +78,12 @@ class MLService:
     ) -> TransactionRecord:
         credits = as_credits(amount)
         if credits <= 0:
-            raise ValueError("Сумма списания должна быть положительной")
+            raise InvalidDataError("Сумма списания должна быть положительной")
 
         with self._session_factory.begin() as session:
             user = self._get_user_for_update(session, user_id)
             if user.balance < credits:
-                raise ValueError("Недостаточно средств на балансе")
+                raise InsufficientBalanceError("Недостаточно средств на балансе")
 
             user.balance -= credits
             transaction = TransactionRecord(
@@ -80,7 +98,7 @@ class MLService:
     ) -> MLRequestRecord:
         valid_data, invalid_data = self._validate_data(input_data)
         if not valid_data:
-            raise ValueError("Нет корректных данных для предсказания")
+            raise InvalidDataError("Нет корректных данных для предсказания")
 
         with self._session_factory.begin() as session:
             user = self._get_user_for_update(session, user_id)
@@ -88,9 +106,9 @@ class MLService:
                 select(MLModelRecord).where(MLModelRecord.code == model_code)
             )
             if model is None:
-                raise ValueError("ML-модель не найдена")
+                raise NotFoundError("ML-модель не найдена")
             if user.balance < model.prediction_cost:
-                raise ValueError("Недостаточно средств на балансе")
+                raise InsufficientBalanceError("Недостаточно средств на балансе")
 
             prediction = self._predict(model.code, valid_data)
             request = MLRequestRecord(
@@ -141,7 +159,7 @@ class MLService:
         statement = select(UserRecord).where(UserRecord.id == user_id).with_for_update()
         user = session.scalar(statement)
         if user is None:
-            raise ValueError("Пользователь не найден")
+            raise NotFoundError("Пользователь не найден")
         return user
 
     @staticmethod
@@ -161,4 +179,4 @@ class MLService:
             return sum(data) / len(data)
         if model_code == "sum":
             return sum(data)
-        raise ValueError("Для ML-модели не реализовано предсказание")
+        raise InvalidDataError("Для ML-модели не реализовано предсказание")

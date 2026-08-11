@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from .database import SessionFactory, engine
 from .orm_models import Base, MLModelRecord, TransactionRecord, UserRecord
+from .security import hash_password
 
 
 def seed_database(session_factory: sessionmaker[Session]) -> None:
@@ -15,7 +16,7 @@ def seed_database(session_factory: sessionmaker[Session]) -> None:
         if demo_user is None:
             demo_user = UserRecord(
                 email="demo@example.com",
-                password_hash="demo_password_hash",
+                password_hash=hash_password("demo1234"),
                 role="user",
                 balance=Decimal("100.00"),
             )
@@ -28,6 +29,8 @@ def seed_database(session_factory: sessionmaker[Session]) -> None:
                     amount=Decimal("100.00"),
                 )
             )
+        elif not demo_user.password_hash.startswith("pbkdf2_sha256$"):
+            demo_user.password_hash = hash_password("demo1234")
 
         demo_admin = session.scalar(
             select(UserRecord).where(UserRecord.email == "admin@example.com")
@@ -36,10 +39,12 @@ def seed_database(session_factory: sessionmaker[Session]) -> None:
             session.add(
                 UserRecord(
                     email="admin@example.com",
-                    password_hash="admin_password_hash",
+                    password_hash=hash_password("admin1234"),
                     role="admin",
                 )
             )
+        elif not demo_admin.password_hash.startswith("pbkdf2_sha256$"):
+            demo_admin.password_hash = hash_password("admin1234")
 
         models = (
             ("average", "Среднее значение", "Вычисляет среднее числовых значений", "10.00"),
