@@ -56,7 +56,7 @@ class MLRequestRecord(Base):
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
     user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
     model_id: Mapped[UUID] = mapped_column(ForeignKey("ml_models.id"), nullable=False)
-    input_data: Mapped[list[Any]] = mapped_column(JSON, nullable=False)
+    input_data: Mapped[Any] = mapped_column(JSON, nullable=False)
     prediction: Mapped[Any] = mapped_column(JSON, nullable=False)
     invalid_data: Mapped[list[Any]] = mapped_column(JSON, nullable=False, default=list)
     status: Mapped[str] = mapped_column(String(20), nullable=False)

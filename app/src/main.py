@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 from .api import router
 from .exceptions import (
     AuthenticationError,
+    BrokerError,
     ConflictError,
     InsufficientBalanceError,
     InvalidDataError,
@@ -56,6 +57,8 @@ async def service_error_handler(_: Request, exc: ServiceError) -> JSONResponse:
         status_code = 409
     elif isinstance(exc, InsufficientBalanceError):
         status_code = 409
+    elif isinstance(exc, BrokerError):
+        status_code = 503
     elif isinstance(exc, InvalidDataError):
         status_code = 400
 

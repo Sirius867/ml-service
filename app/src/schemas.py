@@ -36,26 +36,30 @@ class TopUpRequest(BaseModel):
 
 
 class PredictionRequest(BaseModel):
-    model_code: str = Field(min_length=1, max_length=50)
-    data: list[Any] = Field(min_length=1)
+    model: str = Field(min_length=1, max_length=50)
+    features: dict[str, Any] = Field(min_length=1)
 
 
-class PredictionResponse(BaseModel):
-    id: UUID
-    model_code: str
-    prediction: Any
+class PredictionAcceptedResponse(BaseModel):
+    task_id: UUID
+    status: str
+
+
+class PredictionStatusResponse(BaseModel):
+    task_id: UUID
+    model: str
+    prediction: Any | None
     invalid_data: list[Any]
     status: str
     charged_amount: float
-    balance: float
     created_at: datetime
 
 
 class PredictionHistoryItem(BaseModel):
     id: UUID
     model_code: str
-    input_data: list[Any]
-    prediction: Any
+    input_data: Any
+    prediction: Any | None
     invalid_data: list[Any]
     status: str
     charged_amount: float

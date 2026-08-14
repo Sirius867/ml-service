@@ -7,7 +7,7 @@ services:
       - ./app/src:/app/src
     depends_on:
       rabbitmq:
-        condition: service_started
+        condition: service_healthy
       database:
         condition: service_healthy
     expose:
@@ -31,11 +31,51 @@ services:
   rabbitmq:
     image: rabbitmq:3-management
     restart: on-failure
+    environment:
+      RABBITMQ_DEFAULT_USER: ml_user
+      RABBITMQ_DEFAULT_PASS: ml_password
     ports:
       - "5672:5672"
       - "15672:15672"
     volumes:
       - ./data/rabbitmq:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  worker-1:
+    build: ./app
+    command: ["python", "-m", "src.worker"]
+    restart: on-failure
+    env_file:
+      - ./app/.env
+    environment:
+      WORKER_ID: worker-1
+    volumes:
+      - ./app/src:/app/src
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      database:
+        condition: service_healthy
+
+  worker-2:
+    build: ./app
+    command: ["python", "-m", "src.worker"]
+    restart: on-failure
+    env_file:
+      - ./app/.env
+    environment:
+      WORKER_ID: worker-2
+    volumes:
+      - ./app/src:/app/src
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      database:
+        condition: service_healthy
 
   database:
     image: postgres:16-alpine

@@ -1,4 +1,5 @@
 from decimal import Decimal, ROUND_HALF_UP
+import math
 from typing import Any
 from uuid import UUID
 
@@ -135,6 +136,104 @@ class MLService:
             session.flush()
             return request
 
+    def create_prediction_task(
+        self, user_id: UUID, model_code: str, features: dict[str, Any]
+    ) -> MLRequestRecord:
+        with self._session_factory.begin() as session:
+            user = self._get_user_for_update(session, user_id)
+            model = session.scalar(
+                select(MLModelRecord).where(MLModelRecord.code == model_code)
+            )
+            if model is None:
+                raise NotFoundError("ML-модель не найдена")
+            if user.balance < model.prediction_cost:
+                raise InsufficientBalanceError("Недостаточно средств на балансе")
+
+            request = MLRequestRecord(
+                user=user,
+                model=model,
+                input_data=features,
+                prediction=None,
+                invalid_data=[],
+                status="queued",
+                charged_amount=Decimal("0.00"),
+            )
+            session.add(request)
+            session.flush()
+            return request
+
+    def get_prediction_task(
+        self, user_id: UUID, task_id: UUID
+    ) -> MLRequestRecord:
+        with self._session_factory() as session:
+            statement = (
+                select(MLRequestRecord)
+                .options(selectinload(MLRequestRecord.model))
+                .where(
+                    MLRequestRecord.id == task_id,
+                    MLRequestRecord.user_id == user_id,
+                )
+            )
+            request = session.scalar(statement)
+            if request is None:
+                raise NotFoundError("ML-задача не найдена")
+            return request
+
+    def fail_prediction_task(self, task_id: UUID) -> None:
+        with self._session_factory.begin() as session:
+            request = session.get(MLRequestRecord, task_id)
+            if request is not None and request.status == "queued":
+                request.status = "failed"
+
+    def process_prediction_task(
+        self, task_id: UUID, model_code: str, features: dict[str, Any]
+    ) -> MLRequestRecord:
+        valid_data, invalid_data = self._validate_features(features)
+
+        with self._session_factory.begin() as session:
+            statement = (
+                select(MLRequestRecord)
+                .options(selectinload(MLRequestRecord.model))
+                .where(MLRequestRecord.id == task_id)
+                .with_for_update()
+            )
+            request = session.scalar(statement)
+            if request is None:
+                raise NotFoundError("ML-задача не найдена")
+            if request.status in {"completed", "failed"}:
+                return request
+            if request.model.code != model_code:
+                request.status = "failed"
+                request.invalid_data = [{"error": "Модель задачи не совпадает"}]
+                return request
+            if not valid_data:
+                request.status = "failed"
+                request.invalid_data = invalid_data
+                return request
+
+            user = self._get_user_for_update(session, request.user_id)
+            if user.balance < request.model.prediction_cost:
+                request.status = "failed"
+                request.invalid_data = [{"error": "Недостаточно средств на балансе"}]
+                return request
+
+            prediction = self._predict(request.model.code, valid_data)
+            request.prediction = prediction
+            request.invalid_data = invalid_data
+            request.status = "completed"
+            request.charged_amount = request.model.prediction_cost
+            user.balance -= request.model.prediction_cost
+            session.add(
+                TransactionRecord(
+                    user=user,
+                    request=request,
+                    transaction_type="debit",
+                    amount=request.model.prediction_cost,
+                )
+            )
+            session.flush()
+            return request
+
     def get_transactions(self, user_id: UUID) -> list[TransactionRecord]:
         with self._session_factory() as session:
             statement = (
@@ -171,6 +270,22 @@ class MLService:
                 valid_data.append(float(value))
             except (TypeError, ValueError):
                 invalid_data.append(value)
+        return valid_data, invalid_data
+
+    @staticmethod
+    def _validate_features(
+        features: dict[str, Any],
+    ) -> tuple[list[float], list[dict[str, Any]]]:
+        valid_data: list[float] = []
+        invalid_data: list[dict[str, Any]] = []
+        for name, value in features.items():
+            try:
+                number = float(value)
+                if isinstance(value, bool) or not math.isfinite(number):
+                    raise ValueError
+                valid_data.append(number)
+            except (TypeError, ValueError):
+                invalid_data.append({"feature": name, "value": value})
         return valid_data, invalid_data
 
     @staticmethod

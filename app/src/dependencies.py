@@ -6,6 +6,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from .database import SessionFactory
 from .exceptions import AuthenticationError
 from .orm_models import UserRecord
+from .publisher import RabbitPublisher
 from .security import get_user_id_from_token
 from .services import MLService
 
@@ -15,6 +16,10 @@ bearer_scheme = HTTPBearer(auto_error=False)
 
 def get_service() -> MLService:
     return MLService(SessionFactory)
+
+
+def get_publisher() -> RabbitPublisher:
+    return RabbitPublisher()
 
 
 def get_current_user(

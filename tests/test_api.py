@@ -5,11 +5,19 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.src.dependencies import get_service
+from app.src.dependencies import get_publisher, get_service
 from app.src.init_db import seed_database
 from app.src.main import create_app
 from app.src.orm_models import Base
 from app.src.services import MLService
+
+
+class FakePublisher:
+    def __init__(self) -> None:
+        self.messages = []
+
+    def publish(self, message) -> None:
+        self.messages.append(message)
 
 
 class ApiTestCase(unittest.TestCase):
@@ -25,9 +33,11 @@ class ApiTestCase(unittest.TestCase):
         )
         seed_database(self.session_factory)
         self.service = MLService(self.session_factory)
+        self.publisher = FakePublisher()
 
         app = create_app(initialize=False)
         app.dependency_overrides[get_service] = lambda: self.service
+        app.dependency_overrides[get_publisher] = lambda: self.publisher
         self.client = TestClient(app)
 
     def tearDown(self) -> None:
@@ -55,22 +65,44 @@ class ApiTestCase(unittest.TestCase):
         self.assertEqual(balance.status_code, 200)
         self.assertEqual(balance.json()["balance"], 30.0)
 
-        prediction = self.client.post(
+        accepted = self.client.post(
             "/predict",
-            json={"model_code": "average", "data": [10, "ошибка", 20, 30]},
+            json={
+                "model": "average",
+                "features": {"x1": 10, "bad": "ошибка", "x2": 20, "x3": 30},
+            },
             headers=headers,
+        )
+        self.assertEqual(accepted.status_code, 202)
+        self.assertEqual(accepted.json()["status"], "queued")
+        self.assertEqual(len(self.publisher.messages), 1)
+
+        message = self.publisher.messages[0]
+        self.assertEqual(str(message.task_id), accepted.json()["task_id"])
+        self.assertEqual(message.model, "average")
+        self.service.process_prediction_task(
+            message.task_id, message.model, message.features
+        )
+
+        prediction = self.client.get(
+            f"/predict/{accepted.json()['task_id']}", headers=headers
         )
         self.assertEqual(prediction.status_code, 200)
         self.assertEqual(prediction.json()["prediction"], 20.0)
-        self.assertEqual(prediction.json()["invalid_data"], ["ошибка"])
+        self.assertEqual(
+            prediction.json()["invalid_data"],
+            [{"feature": "bad", "value": "ошибка"}],
+        )
         self.assertEqual(prediction.json()["charged_amount"], 10.0)
-        self.assertEqual(prediction.json()["balance"], 20.0)
+        self.assertEqual(self.client.get("/balance", headers=headers).json()["balance"], 20.0)
 
         predictions = self.client.get("/history/predictions", headers=headers)
         transactions = self.client.get("/history/transactions", headers=headers)
         self.assertEqual(len(predictions.json()), 1)
         self.assertEqual(len(transactions.json()), 2)
-        self.assertEqual(transactions.json()[0]["request_id"], prediction.json()["id"])
+        self.assertEqual(
+            transactions.json()[0]["request_id"], prediction.json()["task_id"]
+        )
 
     def test_authentication_and_validation_errors(self) -> None:
         unauthorized = self.client.get("/balance")
@@ -116,7 +148,7 @@ class ApiTestCase(unittest.TestCase):
 
         response = self.client.post(
             "/predict",
-            json={"model_code": "average", "data": [1, 2, 3]},
+            json={"model": "average", "features": {"x1": 1, "x2": 2, "x3": 3}},
             headers=headers,
         )
         self.assertEqual(response.status_code, 409)
@@ -125,11 +157,25 @@ class ApiTestCase(unittest.TestCase):
         self.client.post("/balance/top-up", json={"amount": 20}, headers=headers)
         invalid_data = self.client.post(
             "/predict",
-            json={"model_code": "average", "data": ["ошибка", None]},
+            json={
+                "model": "average",
+                "features": {"x1": "ошибка", "x2": None},
+            },
             headers=headers,
         )
-        self.assertEqual(invalid_data.status_code, 400)
-        self.assertIn("Нет корректных данных", invalid_data.json()["error"]["message"])
+        self.assertEqual(invalid_data.status_code, 202)
+        message = self.publisher.messages[-1]
+        task = self.service.process_prediction_task(
+            message.task_id, message.model, message.features
+        )
+        self.assertEqual(task.status, "failed")
+        task_status = self.client.get(
+            f"/predict/{invalid_data.json()['task_id']}", headers=headers
+        )
+        self.assertEqual(task_status.json()["status"], "failed")
+        self.assertEqual(
+            self.client.get("/balance", headers=headers).json()["balance"], 20.0
+        )
 
 
 if __name__ == "__main__":

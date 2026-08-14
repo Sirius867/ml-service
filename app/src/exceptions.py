@@ -20,3 +20,7 @@ class ConflictError(ServiceError):
 
 class InsufficientBalanceError(ServiceError):
     pass
+
+
+class BrokerError(ServiceError):
+    pass
