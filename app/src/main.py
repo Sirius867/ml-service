@@ -1,9 +1,11 @@
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from .api import router
 from .exceptions import (
@@ -19,6 +21,8 @@ from .init_db import initialize_database
 
 
 def create_app(initialize: bool = True) -> FastAPI:
+    web_directory = Path(__file__).parent / "web"
+
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         if initialize:
@@ -31,12 +35,27 @@ def create_app(initialize: bool = True) -> FastAPI:
         lifespan=lifespan,
     )
     application.include_router(router)
+    application.mount(
+        "/static", StaticFiles(directory=web_directory / "static"), name="static"
+    )
     application.add_exception_handler(ServiceError, service_error_handler)
     application.add_exception_handler(RequestValidationError, validation_error_handler)
 
-    @application.get("/")
-    async def index() -> dict[str, str]:
-        return {"message": "ML service is running"}
+    @application.get("/", include_in_schema=False)
+    async def index() -> FileResponse:
+        return FileResponse(web_directory / "index.html")
+
+    @application.get("/auth", include_in_schema=False)
+    async def auth_page() -> FileResponse:
+        return FileResponse(web_directory / "auth.html")
+
+    @application.get("/dashboard", include_in_schema=False)
+    async def dashboard_page() -> FileResponse:
+        return FileResponse(web_directory / "dashboard.html")
+
+    @application.get("/history", include_in_schema=False)
+    async def history_page() -> FileResponse:
+        return FileResponse(web_directory / "history.html")
 
     @application.get("/health")
     async def health() -> dict[str, str]:
